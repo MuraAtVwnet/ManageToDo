@@ -8,7 +8,7 @@ $Module = $ModuleName + ".psm1"
 $Installer = "Install" + $ModuleName + ".ps1"
 $Uninstaller = "Uninstall" + $ModuleName + ".ps1"
 $Vertion = "Vertion" + $ModuleName + ".txt"
-$GithubCommonURI = "https://raw.githubusercontent.com/MuraAtVwnet/ManageToDo/refs/heads/main/"
+$GithubCommonURI = "https://raw.githubusercontent.com/$GitHubName/$ModuleName/refs/heads/main/"
 $OnlineInstaller = $HomeDirectory + "OnlineInstall.ps1"
 
 $URI = $GithubCommonURI + $Module
