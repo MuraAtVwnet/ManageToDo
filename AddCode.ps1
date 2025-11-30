@@ -9,7 +9,8 @@ function AddCode(, [switch]$VertionCheck){
 		$Installer = "Install" + $ModuleName + ".ps1"
 		$UnInstaller = "UnInstall" + $ModuleName + ".ps1"
 		$Vertion = "Vertion" + $ModuleName + ".txt"
-		$GithubCommonURI = "https://raw.githubusercontent.com/$GitHubName/$ModuleName/master/"
+		$GithubCommonURI = "https://raw.githubusercontent.com/$GitHubName/$ModuleName/refs/heads/main/OnlineInstall.ps1"
+# OLD		"https://raw.githubusercontent.com/$GitHubName/$ModuleName/master/"
 
 		$VertionTemp = "VertionTemp" + $ModuleName + ".tmp"
 		$VertionFilePath = Join-Path "~/" $Vertion
@@ -69,5 +70,6 @@ function AddCode(, [switch]$VertionCheck){
 		}
 		return
 	}
-	# 本来のコード
+
+	# 以下本来のコード
 
