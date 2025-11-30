@@ -9,7 +9,7 @@ function AddCode(, [switch]$VertionCheck){
 		$Installer = "Install" + $ModuleName + ".ps1"
 		$Uninstaller = "Uninstall" + $ModuleName + ".ps1"
 		$Vertion = "Vertion" + $ModuleName + ".txt"
-		$GithubBaseURI = "https://raw.githubusercontent.com/$GitHubName/$ModuleName/master/"
+		$GithubBaseURI = "https://raw.githubusercontent.com/MuraAtVwnet/ManageToDo/refs/heads/main/"
 		$GithubCommonURI = $GithubBaseURI + "Install.ps1"
 		$VertionTemp = "VertionTemp" + $ModuleName + ".tmp"
 		$VertionFilePath = Join-Path "~/" $Vertion
