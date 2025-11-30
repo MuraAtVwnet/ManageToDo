@@ -120,6 +120,45 @@ function ToDo([switch]$VertionCheck) {
         }
 
         # -----------------------------
+        # 日付値 正規化ヘルパー
+        #   ・PSCustomObject(@{value=...; DateTime=...}) や文字列を [datetime] or $null に揃える
+        # -----------------------------
+        $normalizeDateValue = {
+            param(
+                [object]$value,
+                [object]$fallback  # $null も許可
+            )
+
+            if ($null -eq $value) { return $fallback }
+
+            if ($value -is [datetime]) {
+                return $value
+            }
+
+            # 文字列の場合
+            if ($value -is [string]) {
+                $dt = [datetime]::MinValue
+                if ([datetime]::TryParse($value, [ref]$dt)) {
+                    return $dt
+                }
+                return $fallback
+            }
+
+            # PSCustomObject (@{value=...; DateTime=...}) の場合
+            if ($value -is [psobject]) {
+                $props = $value.PSObject.Properties
+                if ($props['DateTime']) {
+                    return & $normalizeDateValue $props['DateTime'].Value $fallback
+                }
+                if ($props['value']) {
+                    return & $normalizeDateValue $props['value'].Value $fallback
+                }
+            }
+
+            return $fallback
+        }
+
+        # -----------------------------
         # 既存タスクのスキーマ補正
         # （古い JSON に DueDate 等が無い場合に追加する）
         # -----------------------------
@@ -138,8 +177,21 @@ function ToDo([switch]$VertionCheck) {
             }
         }
 
+        # -----------------------------
+        # 既存タスクの日付値を [datetime]/$null に正規化
+        # -----------------------------
+        $normalizeTaskDates = {
+            foreach ($t in $script:ToDoTasks) {
+                if (-not $t) { continue }
+                $t.CreatedAt   = & $normalizeDateValue $t.CreatedAt   ([datetime]::MinValue)
+                $t.CompletedAt = & $normalizeDateValue $t.CompletedAt $null
+                $t.DueDate     = & $normalizeDateValue $t.DueDate     $null
+            }
+        }
+
         & $loadTasks
         & $ensureTaskSchema
+        & $normalizeTaskDates
 
         # -----------------------------
         # 永続化：保存
@@ -429,9 +481,9 @@ function ToDo([switch]$VertionCheck) {
             # 2) 期限が小さい順
             # 3) 登録日（CreatedAt）が新しい順（降順）
             $tasks = $script:ToDoTasks | Sort-Object `
-                @{ Expression = { if ($_.DueDate) { 0 } else { 1 } }; Ascending = $true }, `
-                @{ Expression = { if ($_.DueDate) { [datetime]$_.DueDate } else { [datetime]::MaxValue } }; Ascending = $true }, `
-                @{ Expression = { if ($_.CreatedAt) { [datetime]$_.CreatedAt } else { Get-Date 0 } }; Descending = $true }
+                @{ Expression = { if ($_.DueDate)   { [datetime]$_.DueDate   } else { [datetime]::MaxValue } }; Ascending = $true }, `
+                @{ Expression = { if ($_.DueDate)   { 0 } else { 1 } }; Ascending = $true }, `
+                @{ Expression = { if ($_.CreatedAt) { [datetime]$_.CreatedAt } else { [datetime]::MinValue } }; Descending = $true }
 
             foreach ($t in $tasks) {
 
@@ -445,7 +497,7 @@ function ToDo([switch]$VertionCheck) {
 
                 # 期限
                 $dueText = ""
-                if ($t.PSObject.Properties.Match('DueDate') -and $t.DueDate) {
+                if ($t.DueDate) {
                     $dueText = ([datetime]$t.DueDate).ToString("yyyy/MM/dd")
                 }
                 [void]$item.SubItems.Add($dueText)
@@ -587,6 +639,8 @@ function ToDo([switch]$VertionCheck) {
                     [System.Windows.Forms.MessageBoxButtons]::OK,
                     [System.Windows.Forms.MessageBoxIcon]::Information
                 ) | Out-Null
+
+
                 return
             }
 
@@ -645,7 +699,7 @@ function ToDo([switch]$VertionCheck) {
 
             $task = $script:ToDoTasks | Where-Object { $_.Id -eq $id }
             if ($task) {
-                # 既存プロパティなので代入で OK
+                # 既存プロパティなので代入で OK（正規化済み）
                 $task.IsCompleted = $isCompletedNew
                 $task.CompletedAt = if ($isCompletedNew) { Get-Date } else { $null }
 
@@ -726,7 +780,7 @@ function ToDo([switch]$VertionCheck) {
                 $txtTitle.Text = $task.Title
                 $txtDesc.Text  = $task.Description
 
-                if ($task.PSObject.Properties.Match('DueDate') -and $task.DueDate) {
+                if ($task.DueDate) {
                     $txtDue.Text = ([datetime]$task.DueDate).ToString("yyyy/MM/dd")
                 } else {
                     $txtDue.Clear()
@@ -751,4 +805,3 @@ function ToDo([switch]$VertionCheck) {
 
     } | Out-Null  # ← 関数からは一切出力しない
 }
-
