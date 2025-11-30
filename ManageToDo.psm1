@@ -6,6 +6,7 @@ if (-not $script:ToDoDataPath) { $script:ToDoDataPath = Join-Path $script:ToDoDa
 if (-not $script:ToDoTasks)    { $script:ToDoTasks    = @() }
 
 function ToDo([switch]$VertionCheck) {
+
 	if( $VertionCheck ){
 		$ModuleName = "ManageToDo"
 		$GitHubName = "MuraAtVwnet"

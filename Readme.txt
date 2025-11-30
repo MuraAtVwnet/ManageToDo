@@ -19,8 +19,8 @@ git@github.com:MuraAtVwnet/ManageToDo.git
 
 $ModuleName = "ManageToDo"
 $GitHubName = "MuraAtVwnet"
-$URI = "https://raw.githubusercontent.com/MuraAtVwnet/ManageToDo/refs/heads/main/Onlineinstall.ps1"
-$OutFile = "~/Onlineinstall.ps1"
+$URI = "https://raw.githubusercontent.com/MuraAtVwnet/ManageToDo/refs/heads/main/OnlineInstall.ps1"
+$OutFile = "~/OnlineInstall.ps1"
 Invoke-WebRequest -Uri $URI -OutFile $OutFile
 & $OutFile
 
