@@ -6,21 +6,21 @@ $GitHubName = "MuraAtVwnet"
 $HomeDirectory = "~/"
 $Module = $ModuleName + ".psm1"
 $Installer = "Install" + $ModuleName + ".ps1"
-$UnInstaller = "UnInstall" + $ModuleName + ".ps1"
+$Uninstaller = "Uninstall" + $ModuleName + ".ps1"
 $Vertion = "Vertion" + $ModuleName + ".txt"
 $GithubCommonURI = "https://raw.githubusercontent.com/$GitHubName/$ModuleName/master/"
-$OnlineInstaller = $HomeDirectory + "OnlineInstall.ps1"
+$Onlineinstaller = $HomeDirectory + "Onlineinstall.ps1"
 
 $URI = $GithubCommonURI + $Module
 $ModuleFile = $HomeDirectory + $Module
 Invoke-WebRequest -Uri $URI -OutFile $ModuleFile
 
-$URI = $GithubCommonURI + "install.ps1"
+$URI = $GithubCommonURI + "Install.ps1"
 $InstallerFile = $HomeDirectory + $Installer
 Invoke-WebRequest -Uri $URI -OutFile $InstallerFile
 
-$URI = $GithubCommonURI + "uninstall.ps1"
-$OutFile = $HomeDirectory + $UnInstaller
+$URI = $GithubCommonURI + "Uninstall.ps1"
+$OutFile = $HomeDirectory + $Uninstaller
 Invoke-WebRequest -Uri $URI -OutFile $OutFile
 
 $URI = $GithubCommonURI + "Vertion.txt"
@@ -31,5 +31,5 @@ Invoke-WebRequest -Uri $URI -OutFile $OutFile
 
 Remove-Item $ModuleFile
 Remove-Item $InstallerFile
-Remove-Item $OnlineInstaller
+Remove-Item $Onlineinstaller
 

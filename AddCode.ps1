@@ -7,7 +7,7 @@ function AddCode(, [switch]$VertionCheck){
 		$HomeDirectory = "~/"
 		$Module = $ModuleName + ".psm1"
 		$Installer = "Install" + $ModuleName + ".ps1"
-		$UnInstaller = "UnInstall" + $ModuleName + ".ps1"
+		$Uninstaller = "Uninstall" + $ModuleName + ".ps1"
 		$Vertion = "Vertion" + $ModuleName + ".txt"
 		$GithubBaseURI = "https://raw.githubusercontent.com/$GitHubName/$ModuleName/master/"
 		$GithubCommonURI = $GithubBaseURI + "Install.ps1"
@@ -44,12 +44,12 @@ function AddCode(, [switch]$VertionCheck){
 			$ModuleFile = $HomeDirectory + $Module
 			Invoke-WebRequest -Uri $URI -OutFile $ModuleFile
 
-			$URI = $GithubCommonURI + "install.ps1"
+			$URI = $GithubCommonURI + "Install.ps1"
 			$InstallerFile = $HomeDirectory + $Installer
 			Invoke-WebRequest -Uri $URI -OutFile $InstallerFile
 
-			$URI = $GithubCommonURI + "uninstall.ps1"
-			$OutFile = $HomeDirectory + $UnInstaller
+			$URI = $GithubCommonURI + "Uninstall.ps1"
+			$OutFile = $HomeDirectory + $Uninstaller
 			Invoke-WebRequest -Uri $URI -OutFile $OutFile
 
 			$URI = $GithubCommonURI + "Vertion.txt"
