@@ -6,7 +6,6 @@ if (-not $script:ToDoDataPath) { $script:ToDoDataPath = Join-Path $script:ToDoDa
 if (-not $script:ToDoTasks)    { $script:ToDoTasks    = @() }
 
 function ToDo([switch]$VertionCheck) {
-
 	if( $VertionCheck ){
 		$ModuleName = "ManageToDo"
 		$GitHubName = "MuraAtVwnet"
@@ -16,8 +15,7 @@ function ToDo([switch]$VertionCheck) {
 		$Installer = "Install" + $ModuleName + ".ps1"
 		$UnInstaller = "UnInstall" + $ModuleName + ".ps1"
 		$Vertion = "Vertion" + $ModuleName + ".txt"
-		$GithubCommonURI = "https://raw.githubusercontent.com/$GitHubName/$ModuleName/refs/heads/main/OnlineInstall.ps1"
-# OLD		"https://raw.githubusercontent.com/$GitHubName/$ModuleName/master/"
+		$GithubCommonURI = "https://raw.githubusercontent.com/MuraAtVwnet/ManageToDo/refs/heads/main/"
 
 		$VertionTemp = "VertionTemp" + $ModuleName + ".tmp"
 		$VertionFilePath = Join-Path "~/" $Vertion
@@ -79,7 +77,6 @@ function ToDo([switch]$VertionCheck) {
 	}
 
 	# 以下本来のコード
-
 
     & {
 
