@@ -160,7 +160,6 @@ function ToDo([switch]$VertionCheck) {
 
         # -----------------------------
         # 既存タスクのスキーマ補正
-        # （古い JSON に DueDate 等が無い場合に追加する）
         # -----------------------------
         $ensureTaskSchema = {
             foreach ($t in $script:ToDoTasks) {
@@ -227,7 +226,7 @@ function ToDo([switch]$VertionCheck) {
             $text = $text.Trim()
             if (-not $text) { return $null }
 
-            # 数字列だけを順番に抽出（例: "2025/1/5" → 2025,1,5 / "3/15" → 3,15 / "15" → 15）
+            # 数字列だけを順番に抽出
             $matches = [System.Text.RegularExpressions.Regex]::Matches($text, '\d+')
             $nums = @()
             foreach ($m in $matches) {
@@ -324,7 +323,7 @@ function ToDo([switch]$VertionCheck) {
         # -----------------------------
         $form = New-Object System.Windows.Forms.Form
         $form.Text = "割り込み ToDo"
-        $form.Size = New-Object System.Drawing.Size(720, 600)
+        $form.Size = New-Object System.Drawing.Size(900, 620)   # 横幅拡大
         $form.StartPosition = "CenterScreen"
         $form.TopMost = $true   # 他のウィンドウの裏に隠れないように
 
@@ -337,7 +336,7 @@ function ToDo([switch]$VertionCheck) {
 
         $txtTitle = New-Object System.Windows.Forms.TextBox
         $txtTitle.Location = New-Object System.Drawing.Point(90,8)
-        $txtTitle.Size     = New-Object System.Drawing.Size(600,20)
+        $txtTitle.Size     = New-Object System.Drawing.Size(780,20)
         $txtTitle.Anchor   = 'Top,Left,Right'
         $form.Controls.Add($txtTitle)
 
@@ -350,7 +349,7 @@ function ToDo([switch]$VertionCheck) {
 
         $txtDesc = New-Object System.Windows.Forms.TextBox
         $txtDesc.Location   = New-Object System.Drawing.Point(90,38)
-        $txtDesc.Size       = New-Object System.Drawing.Size(600,80)
+        $txtDesc.Size       = New-Object System.Drawing.Size(780,80)
         $txtDesc.Multiline  = $true
         $txtDesc.ScrollBars = 'Vertical'
         $txtDesc.Anchor     = 'Top,Left,Right'
@@ -369,17 +368,28 @@ function ToDo([switch]$VertionCheck) {
         $txtDue.Anchor   = 'Top,Left'
         $form.Controls.Add($txtDue)
 
+        # 期限を今日にするボタン
+        $btnTodayDue = New-Object System.Windows.Forms.Button
+        $btnTodayDue.Text     = "今日"
+        $btnTodayDue.Location = New-Object System.Drawing.Point(220,121)
+        $btnTodayDue.Size     = New-Object System.Drawing.Size(60,25)
+        $form.Controls.Add($btnTodayDue)
+
+        $btnTodayDue.Add_Click({
+            $txtDue.Text = (Get-Date).ToString("yyyy/MM/dd")
+        })
+
         # 追加ボタン
         $btnAdd = New-Object System.Windows.Forms.Button
         $btnAdd.Text     = "追加"
-        $btnAdd.Location = New-Object System.Drawing.Point(220,121)
+        $btnAdd.Location = New-Object System.Drawing.Point(290,121)
         $btnAdd.Size     = New-Object System.Drawing.Size(80,25)
         $form.Controls.Add($btnAdd)
 
         # 更新ボタン（選択したタスクの修正）※最初は無効
         $btnUpdate = New-Object System.Windows.Forms.Button
         $btnUpdate.Text     = "更新"
-        $btnUpdate.Location = New-Object System.Drawing.Point(310,121)
+        $btnUpdate.Location = New-Object System.Drawing.Point(380,121)
         $btnUpdate.Size     = New-Object System.Drawing.Size(80,25)
         $btnUpdate.Enabled  = $false
         $form.Controls.Add($btnUpdate)
@@ -387,7 +397,7 @@ function ToDo([switch]$VertionCheck) {
         # 入力クリアボタン
         $btnClear = New-Object System.Windows.Forms.Button
         $btnClear.Text     = "入力クリア"
-        $btnClear.Location = New-Object System.Drawing.Point(400,121)
+        $btnClear.Location = New-Object System.Drawing.Point(470,121)
         $btnClear.Size     = New-Object System.Drawing.Size(80,25)
         $form.Controls.Add($btnClear)
 
@@ -396,7 +406,7 @@ function ToDo([switch]$VertionCheck) {
         $btnToggleCompleted.Appearance = 'Button'
         $btnToggleCompleted.Text       = "完了タスクも表示：OFF"
         $btnToggleCompleted.TextAlign  = 'MiddleCenter'
-        $btnToggleCompleted.Location   = New-Object System.Drawing.Point(490,121)
+        $btnToggleCompleted.Location   = New-Object System.Drawing.Point(560,121)
         $btnToggleCompleted.Size       = New-Object System.Drawing.Size(150,25)
         $btnToggleCompleted.Checked    = $false
         $form.Controls.Add($btnToggleCompleted)
@@ -404,10 +414,9 @@ function ToDo([switch]$VertionCheck) {
         # 完了タスク削除ボタン（完了表示 ON のときだけ有効）
         $btnDeleteCompleted = New-Object System.Windows.Forms.Button
         $btnDeleteCompleted.Text     = "完了タスク削除"
-        $btnDeleteCompleted.Location = New-Object System.Drawing.Point(650,121)
-        $btnDeleteCompleted.Size     = New-Object System.Drawing.Size(60,25)
+        $btnDeleteCompleted.Location = New-Object System.Drawing.Point(720,121)
+        $btnDeleteCompleted.Size     = New-Object System.Drawing.Size(120,25)
         $btnDeleteCompleted.Enabled  = $false
-        $btnDeleteCompleted.AutoSize = $true
         $form.Controls.Add($btnDeleteCompleted)
 
         # -----------------------------
@@ -415,18 +424,18 @@ function ToDo([switch]$VertionCheck) {
         # -----------------------------
         $lv = New-Object System.Windows.Forms.ListView
         $lv.Location      = New-Object System.Drawing.Point(10,160)
-        $lv.Size          = New-Object System.Drawing.Size(680,280)
+        $lv.Size          = New-Object System.Drawing.Size(830,280)
         $lv.Anchor        = 'Top,Left,Right'
         $lv.View          = 'Details'
         $lv.FullRowSelect = $true
         $lv.GridLines     = $true
         $lv.CheckBoxes    = $true
 
-        [void]$lv.Columns.Add("タイトル",220)
-        [void]$lv.Columns.Add("期限",100)
-        [void]$lv.Columns.Add("作成日時",140)
+        [void]$lv.Columns.Add("タイトル",280)
+        [void]$lv.Columns.Add("期限",110)
+        [void]$lv.Columns.Add("作成日時",150)
         [void]$lv.Columns.Add("状態",80)
-        [void]$lv.Columns.Add("内容",120)
+        [void]$lv.Columns.Add("内容",190)
 
         $form.Controls.Add($lv)
 
@@ -441,7 +450,7 @@ function ToDo([switch]$VertionCheck) {
 
         $rtbFull = New-Object System.Windows.Forms.RichTextBox
         $rtbFull.Location   = New-Object System.Drawing.Point(10,470)
-        $rtbFull.Size       = New-Object System.Drawing.Size(680,90)
+        $rtbFull.Size       = New-Object System.Drawing.Size(830,90)
         $rtbFull.Multiline  = $true
         $rtbFull.ScrollBars = 'Vertical'
         $rtbFull.ReadOnly   = $true
@@ -469,6 +478,10 @@ function ToDo([switch]$VertionCheck) {
 
         # -----------------------------
         # ListView 再描画
+        # 並び順:
+        #  1) 期限あり(0) → 期限なし(1)
+        #  2) 期限が古い順（昇順）※結果として「今日より過去」が上側
+        #  3) 登録日が古い順（昇順）
         # -----------------------------
         $refreshList = {
             $lv.BeginUpdate()
@@ -476,14 +489,10 @@ function ToDo([switch]$VertionCheck) {
 
             $showCompleted = $btnToggleCompleted.Checked
 
-            # 並び順:
-            # 1) 期限あり(0) → なし(1)
-            # 2) 期限が小さい順
-            # 3) 登録日（CreatedAt）が新しい順（降順）
             $tasks = $script:ToDoTasks | Sort-Object `
-                @{ Expression = { if ($_.DueDate)   { [datetime]$_.DueDate   } else { [datetime]::MaxValue } }; Ascending = $true }, `
-                @{ Expression = { if ($_.DueDate)   { 0 } else { 1 } }; Ascending = $true }, `
-                @{ Expression = { if ($_.CreatedAt) { [datetime]$_.CreatedAt } else { [datetime]::MinValue } }; Descending = $true }
+                @{ Expression = { if ($_.DueDate) { 0 } else { 1 } }; Ascending  = $true  }, `
+                @{ Expression = { if ($_.DueDate) { [datetime]$_.DueDate } else { [datetime]::MaxValue } }; Ascending = $true }, `
+                @{ Expression = { if ($_.CreatedAt) { [datetime]$_.CreatedAt } else { [datetime]::MaxValue } }; Ascending  = $true }
 
             foreach ($t in $tasks) {
 
@@ -610,7 +619,7 @@ function ToDo([switch]$VertionCheck) {
 
         # -----------------------------
         # タスク更新（選択中のタスクを修正）
-        #  ※ プロパティ更新はすべて Add-Member -Force で行う
+        #  ※ プロパティ更新は Add-Member -Force
         #  ※ 更新後に入力クリア
         # -----------------------------
         $updateTask = {
@@ -639,8 +648,6 @@ function ToDo([switch]$VertionCheck) {
                     [System.Windows.Forms.MessageBoxButtons]::OK,
                     [System.Windows.Forms.MessageBoxIcon]::Information
                 ) | Out-Null
-
-
                 return
             }
 
@@ -660,14 +667,13 @@ function ToDo([switch]$VertionCheck) {
                 }
             }
 
-            # ここで Add-Member -Force を用いて既存/非既存プロパティ問わず安全に更新
             $task | Add-Member -NotePropertyName Title       -NotePropertyValue $title   -Force
             $task | Add-Member -NotePropertyName Description -NotePropertyValue $desc    -Force
             $task | Add-Member -NotePropertyName DueDate     -NotePropertyValue $dueDate -Force
 
             & $saveTasks
             & $refreshList
-            & $clearInputs   # ← 更新後に入力クリア＆選択解除
+            & $clearInputs   # 更新後に入力クリア
         }
 
         $btnUpdate.Add_Click({ & $updateTask })
@@ -678,10 +684,10 @@ function ToDo([switch]$VertionCheck) {
         $btnToggleCompleted.Add_CheckedChanged({
             if ($btnToggleCompleted.Checked) {
                 $btnToggleCompleted.Text    = "完了タスクも表示：ON"
-                $btnDeleteCompleted.Enabled = $true   # 完了タスク表示中だけ削除可能
+                $btnDeleteCompleted.Enabled = $true
             } else {
                 $btnToggleCompleted.Text    = "完了タスクも表示：OFF"
-                $btnDeleteCompleted.Enabled = $false  # OFF のときは削除禁止
+                $btnDeleteCompleted.Enabled = $false
             }
 
             & $refreshList
@@ -699,7 +705,6 @@ function ToDo([switch]$VertionCheck) {
 
             $task = $script:ToDoTasks | Where-Object { $_.Id -eq $id }
             if ($task) {
-                # 既存プロパティなので代入で OK（正規化済み）
                 $task.IsCompleted = $isCompletedNew
                 $task.CompletedAt = if ($isCompletedNew) { Get-Date } else { $null }
 
