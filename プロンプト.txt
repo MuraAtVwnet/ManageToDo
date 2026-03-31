@@ -30,3 +30,1920 @@
 
 表示の「内容」エリアを広げられるようにしてください
 
+Window を広げた際はリストエリアはそのままで、「内容」エリアが広がるようにしてください
+「内容」エリアには、スクロールバーを付けて、長い内容でも全文が確認できるようにしてください
+
+終了時に一覧と内容の境界位置を終了時に保存して、次回起動時に前回の高さで開くようにしてください
+
+Window のサイズも終了時に保存して、次回起動時に復元するようにしてください
+
+------------------------
+#チャットが重くなったので引継ぎプロンプトで新しいチャットに移行
+
+あなたは PowerShell に精通したエンジニアです。
+以下の仕様の ToDo GUI ツールを改善・保守してください。
+
+# 前提（重要）
+・既存データとの互換性を絶対に壊さないこと
+・保存形式は JSON（ConvertTo-Json / ConvertFrom-Json）
+・既存プロパティは変更・削除しない（追加はOK）
+・PowerShell 5.1 / PowerShell 7 両対応
+
+# 現在のデータ構造
+各タスクは PSCustomObject で以下のプロパティを持つ
+
+- Id (string GUID)
+- Title (string)
+- Description (string)
+- IsCompleted (bool)
+- CreatedAt (datetime)
+- CompletedAt (datetime or null)
+- DueDate (datetime or null)
+
+※ CreatedAt / DueDate は string や PSCustomObject になるケースがあるため吸収すること
+
+# 保存場所
+$env:LOCALAPPDATA\InterruptToDo\
+
+- ToDoTasks.json（タスク本体）
+- ToDoSettings.json（UI設定）
+
+# 設定ファイル仕様
+ToDoSettings.json:
+{
+  "SplitterDistance": number
+}
+
+# 現在の機能
+・関数名: ToDo（グローバル関数1つ）
+・GUI（Windows Forms）
+・タスク追加 / 更新
+・完了チェック（チェックボックス）
+・完了→未完了戻し
+・完了タスク非表示（トグルボタン）
+・完了タスク物理削除
+・URLクリックでブラウザ起動
+・期限入力（YYYY/M/D, M/D, D 対応）
+・期限ありタスク優先表示
+・入力クリアボタン
+・更新ボタンは編集中のみ有効
+・ウィンドウ最前面
+・終了時自動保存
+・Splitter位置保存＆復元
+
+# UI仕様
+・上: タスクリスト（固定高さ）
+・下: 内容（可変・スクロールあり）
+・ウィンドウ拡大時は「内容エリアのみ拡大」
+・SplitContainer.FixedPanel = Panel1
+
+# ソート仕様（重要）
+1. 期限ありを上
+2. DueDate 昇順（近い順）
+3. CreatedAt 昇順
+
+# 既知の考慮点
+・PS5.1 では DateTime が PSCustomObject になる問題あり
+・Add-Member -Force を使用すること
+・Test-Path に null を渡さないこと
+・Out-Null で False 出力を防ぐこと
+
+# 今後の方針
+・既存仕様を壊さず改善
+・後方互換を必ず維持
+・動作確認済みの完全コードで回答
+
+# 現在のコード
+#requires -Version 5.1
+
+function ToDo {
+
+    & {
+        # -----------------------------
+        # パス類を毎回確実に初期化
+        # -----------------------------
+        if (-not $script:ToDoDataDir) {
+            $script:ToDoDataDir = Join-Path $env:LOCALAPPDATA 'InterruptToDo'
+        }
+        if (-not $script:ToDoDataPath) {
+            $script:ToDoDataPath = Join-Path $script:ToDoDataDir 'ToDoTasks.json'
+        }
+        if (-not $script:ToDoSettingsPath) {
+            $script:ToDoSettingsPath = Join-Path $script:ToDoDataDir 'ToDoSettings.json'
+        }
+        if (-not $script:ToDoTasks) {
+            $script:ToDoTasks = @()
+        }
+
+        Add-Type -AssemblyName System.Windows.Forms | Out-Null
+        Add-Type -AssemblyName System.Drawing | Out-Null
+        [void][System.Windows.Forms.Application]::EnableVisualStyles()
+
+        $loadTasks = {
+            if ([string]::IsNullOrWhiteSpace($script:ToDoDataPath)) {
+                $script:ToDoTasks = @()
+                return
+            }
+
+            if (-not (Test-Path -LiteralPath $script:ToDoDataPath)) {
+                $script:ToDoTasks = @()
+                return
+            }
+
+            try {
+                $json = Get-Content -LiteralPath $script:ToDoDataPath -Raw
+                if ([string]::IsNullOrWhiteSpace($json)) {
+                    $script:ToDoTasks = @()
+                    return
+                }
+
+                $loaded = $json | ConvertFrom-Json
+                if ($loaded -is [System.Collections.IEnumerable] -and -not ($loaded -is [string])) {
+                    $script:ToDoTasks = @($loaded)
+                }
+                else {
+                    $script:ToDoTasks = @($loaded)
+                }
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "タスク読み込みエラー:`n$($_.Exception.Message)",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                ) | Out-Null
+                $script:ToDoTasks = @()
+            }
+        }
+
+        $loadSettings = {
+            $settings = [PSCustomObject]@{
+                SplitterDistance = 270
+            }
+
+            if ([string]::IsNullOrWhiteSpace($script:ToDoSettingsPath)) {
+                return $settings
+            }
+
+            if (-not (Test-Path -LiteralPath $script:ToDoSettingsPath)) {
+                return $settings
+            }
+
+            try {
+                $json = Get-Content -LiteralPath $script:ToDoSettingsPath -Raw
+                if ([string]::IsNullOrWhiteSpace($json)) {
+                    return $settings
+                }
+
+                $loaded = $json | ConvertFrom-Json
+                if ($loaded.PSObject.Properties['SplitterDistance']) {
+                    $settings.SplitterDistance = [int]$loaded.SplitterDistance
+                }
+
+                return $settings
+            }
+            catch {
+                return $settings
+            }
+        }
+
+        $saveSettings = {
+            param(
+                [int]$SplitterDistance
+            )
+
+            try {
+                if ([string]::IsNullOrWhiteSpace($script:ToDoDataDir)) {
+                    return
+                }
+
+                if (-not (Test-Path -LiteralPath $script:ToDoDataDir)) {
+                    [void](New-Item -ItemType Directory -Path $script:ToDoDataDir -Force)
+                }
+
+                if ([string]::IsNullOrWhiteSpace($script:ToDoSettingsPath)) {
+                    return
+                }
+
+                $settings = [PSCustomObject]@{
+                    SplitterDistance = $SplitterDistance
+                }
+
+                $settings |
+                    ConvertTo-Json -Depth 3 |
+                    Out-File -FilePath $script:ToDoSettingsPath -Encoding UTF8 -Force
+            }
+            catch {
+            }
+        }
+
+        $normalizeDateValue = {
+            param(
+                [object]$value,
+                [object]$fallback
+            )
+
+            if ($null -eq $value) { return $fallback }
+
+            if ($value -is [datetime]) {
+                return $value
+            }
+
+            if ($value -is [string]) {
+                $dt = [datetime]::MinValue
+                if ([datetime]::TryParse($value, [ref]$dt)) {
+                    return $dt
+                }
+                return $fallback
+            }
+
+            if ($value -is [psobject]) {
+                $props = $value.PSObject.Properties
+                if ($props['DateTime']) {
+                    return & $normalizeDateValue $props['DateTime'].Value $fallback
+                }
+                if ($props['value']) {
+                    return & $normalizeDateValue $props['value'].Value $fallback
+                }
+            }
+
+            return $fallback
+        }
+
+        $ensureTaskSchema = {
+            foreach ($t in $script:ToDoTasks) {
+                if (-not $t) { continue }
+                $props = $t.PSObject.Properties
+
+                if (-not $props.Match('Id'))          { Add-Member -InputObject $t -NotePropertyName Id          -NotePropertyValue ([guid]::NewGuid().ToString()) }
+                if (-not $props.Match('Title'))       { Add-Member -InputObject $t -NotePropertyName Title       -NotePropertyValue "" }
+                if (-not $props.Match('Description')) { Add-Member -InputObject $t -NotePropertyName Description -NotePropertyValue "" }
+                if (-not $props.Match('IsCompleted')) { Add-Member -InputObject $t -NotePropertyName IsCompleted -NotePropertyValue $false }
+                if (-not $props.Match('CreatedAt'))   { Add-Member -InputObject $t -NotePropertyName CreatedAt   -NotePropertyValue (Get-Date) }
+                if (-not $props.Match('CompletedAt')) { Add-Member -InputObject $t -NotePropertyName CompletedAt -NotePropertyValue $null }
+                if (-not $props.Match('DueDate'))     { Add-Member -InputObject $t -NotePropertyName DueDate     -NotePropertyValue $null }
+            }
+        }
+
+        $normalizeTaskDates = {
+            foreach ($t in $script:ToDoTasks) {
+                if (-not $t) { continue }
+                $t.CreatedAt   = & $normalizeDateValue $t.CreatedAt   ([datetime]::MinValue)
+                $t.CompletedAt = & $normalizeDateValue $t.CompletedAt $null
+                $t.DueDate     = & $normalizeDateValue $t.DueDate     $null
+            }
+        }
+
+        & $loadTasks
+        & $ensureTaskSchema
+        & $normalizeTaskDates
+        $settings = & $loadSettings
+
+        $saveTasks = {
+            try {
+                if ([string]::IsNullOrWhiteSpace($script:ToDoDataDir)) {
+                    return
+                }
+
+                if (-not (Test-Path -LiteralPath $script:ToDoDataDir)) {
+                    [void](New-Item -ItemType Directory -Path $script:ToDoDataDir -Force)
+                }
+
+                if ([string]::IsNullOrWhiteSpace($script:ToDoDataPath)) {
+                    return
+                }
+
+                $script:ToDoTasks |
+                    ConvertTo-Json -Depth 5 |
+                    Out-File -FilePath $script:ToDoDataPath -Encoding UTF8 -Force
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "タスク保存エラー:`n$($_.Exception.Message)",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                ) | Out-Null
+            }
+        }
+
+        $parseDueDate = {
+            param([string]$text)
+
+            $text = $text.Trim()
+            if (-not $text) { return $null }
+
+            $matches = [System.Text.RegularExpressions.Regex]::Matches($text, '\d+')
+            $nums = @()
+            foreach ($m in $matches) {
+                try {
+                    $nums += [int]$m.Value
+                }
+                catch {
+                    throw "期限の数字部分を解釈できませんでした。"
+                }
+            }
+
+            if ($nums.Count -eq 0) {
+                throw "期限に数字が含まれていません。"
+            }
+
+            $today = (Get-Date).Date
+
+            if ($nums.Count -eq 1) {
+                $day = $nums[0]
+
+                if ($day -lt 1 -or $day -gt 31) {
+                    throw "期限の『日』は 1～31 で指定してください。"
+                }
+
+                $year  = $today.Year
+                $month = $today.Month
+
+                for ($i = 0; $i -lt 24; $i++) {
+                    $daysInMonth = [datetime]::DaysInMonth($year, $month)
+                    if ($day -le $daysInMonth) {
+                        $candidate = [datetime]::new($year, $month, $day)
+                        if ($candidate -ge $today) {
+                            return $candidate.Date
+                        }
+                    }
+                    $month++
+                    if ($month -gt 12) {
+                        $month = 1
+                        $year++
+                    }
+                }
+
+                throw "期限の日付を将来日に解釈できませんでした。"
+            }
+            elseif ($nums.Count -eq 2) {
+                $month = $nums[0]
+                $day   = $nums[1]
+
+                if ($month -lt 1 -or $month -gt 12) {
+                    throw "期限の『月』は 1～12 で指定してください。"
+                }
+                if ($day -lt 1 -or $day -gt 31) {
+                    throw "期限の『日』は 1～31 で指定してください。"
+                }
+
+                $year = $today.Year
+                if ($day -gt [datetime]::DaysInMonth($year, $month)) {
+                    throw "指定された月 $month に日は $day は存在しません。"
+                }
+
+                $candidate = [datetime]::new($year, $month, $day)
+                if ($candidate -lt $today) {
+                    $year++
+                    if ($day -gt [datetime]::DaysInMonth($year, $month)) {
+                        throw "指定された月日を将来日に解釈できません。"
+                    }
+                    $candidate = [datetime]::new($year, $month, $day)
+                }
+                return $candidate.Date
+            }
+            elseif ($nums.Count -eq 3) {
+                $year  = $nums[0]
+                $month = $nums[1]
+                $day   = $nums[2]
+
+                try {
+                    return ([datetime]::new($year, $month, $day)).Date
+                }
+                catch {
+                    throw "期限の年月日が不正です（年/月/日 で指定してください）。"
+                }
+            }
+            else {
+                throw "期限の形式が不正です（指定できるのは 日 / 月日 / 年月日 です）。"
+            }
+        }
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = "割り込み ToDo"
+        $form.Size = New-Object System.Drawing.Size(900, 680)
+        $form.StartPosition = "CenterScreen"
+        $form.TopMost = $true
+        $form.MinimumSize = New-Object System.Drawing.Size(760, 520)
+
+        $lblTitle = New-Object System.Windows.Forms.Label
+        $lblTitle.Text = "タイトル:"
+        $lblTitle.Location = New-Object System.Drawing.Point(10,10)
+        $lblTitle.Size     = New-Object System.Drawing.Size(80,20)
+        $form.Controls.Add($lblTitle)
+
+        $txtTitle = New-Object System.Windows.Forms.TextBox
+        $txtTitle.Location = New-Object System.Drawing.Point(90,8)
+        $txtTitle.Size     = New-Object System.Drawing.Size(780,20)
+        $txtTitle.Anchor   = 'Top,Left,Right'
+        $form.Controls.Add($txtTitle)
+
+        $lblDesc = New-Object System.Windows.Forms.Label
+        $lblDesc.Text = "内容:"
+        $lblDesc.Location = New-Object System.Drawing.Point(10,40)
+        $lblDesc.Size     = New-Object System.Drawing.Size(80,20)
+        $form.Controls.Add($lblDesc)
+
+        $txtDesc = New-Object System.Windows.Forms.TextBox
+        $txtDesc.Location   = New-Object System.Drawing.Point(90,38)
+        $txtDesc.Size       = New-Object System.Drawing.Size(780,80)
+        $txtDesc.Multiline  = $true
+        $txtDesc.ScrollBars = 'Vertical'
+        $txtDesc.Anchor     = 'Top,Left,Right'
+        $form.Controls.Add($txtDesc)
+
+        $lblDue = New-Object System.Windows.Forms.Label
+        $lblDue.Text = "期限(任意):"
+        $lblDue.Location = New-Object System.Drawing.Point(10,125)
+        $lblDue.Size     = New-Object System.Drawing.Size(80,20)
+        $form.Controls.Add($lblDue)
+
+        $txtDue = New-Object System.Windows.Forms.TextBox
+        $txtDue.Location = New-Object System.Drawing.Point(90,123)
+        $txtDue.Size     = New-Object System.Drawing.Size(120,20)
+        $form.Controls.Add($txtDue)
+
+        $btnTodayDue = New-Object System.Windows.Forms.Button
+        $btnTodayDue.Text     = "今日"
+        $btnTodayDue.Location = New-Object System.Drawing.Point(220,121)
+        $btnTodayDue.Size     = New-Object System.Drawing.Size(60,25)
+        $form.Controls.Add($btnTodayDue)
+        $btnTodayDue.Add_Click({
+            $txtDue.Text = (Get-Date).ToString("yyyy/MM/dd")
+        })
+
+        $btnAdd = New-Object System.Windows.Forms.Button
+        $btnAdd.Text     = "追加"
+        $btnAdd.Location = New-Object System.Drawing.Point(290,121)
+        $btnAdd.Size     = New-Object System.Drawing.Size(80,25)
+        $form.Controls.Add($btnAdd)
+
+        $btnUpdate = New-Object System.Windows.Forms.Button
+        $btnUpdate.Text     = "更新"
+        $btnUpdate.Location = New-Object System.Drawing.Point(380,121)
+        $btnUpdate.Size     = New-Object System.Drawing.Size(80,25)
+        $btnUpdate.Enabled  = $false
+        $form.Controls.Add($btnUpdate)
+
+        $btnClear = New-Object System.Windows.Forms.Button
+        $btnClear.Text     = "入力クリア"
+        $btnClear.Location = New-Object System.Drawing.Point(470,121)
+        $btnClear.Size     = New-Object System.Drawing.Size(80,25)
+        $form.Controls.Add($btnClear)
+
+        $btnToggleCompleted = New-Object System.Windows.Forms.CheckBox
+        $btnToggleCompleted.Appearance = 'Button'
+        $btnToggleCompleted.Text       = "完了タスクも表示：OFF"
+        $btnToggleCompleted.TextAlign  = 'MiddleCenter'
+        $btnToggleCompleted.Location   = New-Object System.Drawing.Point(560,121)
+        $btnToggleCompleted.Size       = New-Object System.Drawing.Size(150,25)
+        $btnToggleCompleted.Checked    = $false
+        $form.Controls.Add($btnToggleCompleted)
+
+        $btnDeleteCompleted = New-Object System.Windows.Forms.Button
+        $btnDeleteCompleted.Text     = "完了タスク削除"
+        $btnDeleteCompleted.Location = New-Object System.Drawing.Point(720,121)
+        $btnDeleteCompleted.Size     = New-Object System.Drawing.Size(120,25)
+        $btnDeleteCompleted.Enabled  = $false
+        $form.Controls.Add($btnDeleteCompleted)
+
+        $splitMain = New-Object System.Windows.Forms.SplitContainer
+        $splitMain.Location = New-Object System.Drawing.Point(10,160)
+        $splitMain.Size = New-Object System.Drawing.Size(860,470)
+        $splitMain.Anchor = 'Top,Left,Right,Bottom'
+        $splitMain.Orientation = [System.Windows.Forms.Orientation]::Horizontal
+        $splitMain.SplitterWidth = 6
+        $splitMain.FixedPanel = [System.Windows.Forms.FixedPanel]::Panel1
+        $splitMain.IsSplitterFixed = $false
+        $splitMain.Panel1MinSize = 150
+        $splitMain.Panel2MinSize = 80
+        $form.Controls.Add($splitMain)
+
+        $lv = New-Object System.Windows.Forms.ListView
+        $lv.Dock          = 'Fill'
+        $lv.View          = 'Details'
+        $lv.FullRowSelect = $true
+        $lv.GridLines     = $true
+        $lv.CheckBoxes    = $true
+
+        [void]$lv.Columns.Add("タイトル",300)
+        [void]$lv.Columns.Add("期限",110)
+        [void]$lv.Columns.Add("作成日時",150)
+        [void]$lv.Columns.Add("状態",80)
+        [void]$lv.Columns.Add("内容",200)
+
+        $splitMain.Panel1.Controls.Add($lv)
+
+        $panelBottom = New-Object System.Windows.Forms.Panel
+        $panelBottom.Dock = 'Fill'
+        $splitMain.Panel2.Controls.Add($panelBottom)
+
+        $lblFull = New-Object System.Windows.Forms.Label
+        $lblFull.Text     = "内容（全文・URLクリック可）:"
+        $lblFull.Dock     = 'Top'
+        $lblFull.Height   = 20
+        $panelBottom.Controls.Add($lblFull)
+
+        $rtbFull = New-Object System.Windows.Forms.RichTextBox
+        $rtbFull.Dock        = 'Fill'
+        $rtbFull.Multiline   = $true
+        $rtbFull.ScrollBars  = 'Vertical'
+        $rtbFull.WordWrap    = $true
+        $rtbFull.ReadOnly    = $true
+        $rtbFull.DetectUrls  = $true
+        $panelBottom.Controls.Add($rtbFull)
+
+        $form.Add_Shown({
+            $maxSplitter = $splitMain.Height - $splitMain.Panel2MinSize - $splitMain.SplitterWidth
+            $minSplitter = $splitMain.Panel1MinSize
+            $saved = [int]$settings.SplitterDistance
+
+            if ($saved -lt $minSplitter) { $saved = $minSplitter }
+            if ($saved -gt $maxSplitter) { $saved = $maxSplitter }
+
+            $splitMain.SplitterDistance = $saved
+        })
+
+        $rtbFull.Add_LinkClicked({
+            param($sender, $e)
+            try {
+                if ($e.LinkText) {
+                    Start-Process $e.LinkText
+                }
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "URL を開けませんでした:`n$($_.Exception.Message)",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                ) | Out-Null
+            }
+        })
+
+        $refreshList = {
+            $lv.BeginUpdate()
+            $lv.Items.Clear()
+
+            $showCompleted = $btnToggleCompleted.Checked
+
+            $tasks = $script:ToDoTasks | Sort-Object `
+                @{ Expression = { if ($_.DueDate) { 0 } else { 1 } }; Ascending = $true }, `
+                @{ Expression = { if ($_.DueDate) { [datetime]$_.DueDate } else { [datetime]::MaxValue } }; Ascending = $true }, `
+                @{ Expression = { if ($_.CreatedAt) { [datetime]$_.CreatedAt } else { [datetime]::MaxValue } }; Ascending = $true }
+
+            foreach ($t in $tasks) {
+                if (-not $showCompleted -and $t.IsCompleted) {
+                    continue
+                }
+
+                $item = New-Object System.Windows.Forms.ListViewItem($t.Title)
+                $item.Tag     = $t.Id
+                $item.Checked = $t.IsCompleted
+
+                $dueText = ""
+                if ($t.DueDate) {
+                    $dueText = ([datetime]$t.DueDate).ToString("yyyy/MM/dd")
+                }
+                [void]$item.SubItems.Add($dueText)
+
+                $createdText = ""
+                if ($t.CreatedAt) {
+                    $createdText = ([datetime]$t.CreatedAt).ToString("yyyy/MM/dd HH:mm")
+                }
+                [void]$item.SubItems.Add($createdText)
+
+                $status = if ($t.IsCompleted) { "完了" } else { "未完了" }
+                [void]$item.SubItems.Add($status)
+
+                $descShort = $t.Description
+                if ($descShort -and $descShort.Length -gt 30) {
+                    $descShort = $descShort.Substring(0,30) + "..."
+                }
+                [void]$item.SubItems.Add($descShort)
+
+                if ($t.IsCompleted) {
+                    $item.ForeColor = [System.Drawing.Color]::Gray
+                }
+
+                [void]$lv.Items.Add($item)
+            }
+
+            $lv.EndUpdate()
+        }
+
+        $clearInputs = {
+            $txtTitle.Clear()
+            $txtDesc.Clear()
+            $txtDue.Clear()
+            $rtbFull.Clear()
+            foreach ($sel in @($lv.SelectedItems)) {
+                $sel.Selected = $false
+            }
+            $btnUpdate.Enabled = $false
+            $txtTitle.Focus()
+        }
+
+        $btnClear.Add_Click({ & $clearInputs })
+
+        $addTask = {
+            $title  = $txtTitle.Text.Trim()
+            $desc   = $txtDesc.Text.Trim()
+            $dueTxt = $txtDue.Text.Trim()
+
+            if ([string]::IsNullOrWhiteSpace($title)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "タイトルを入力してください。",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $dueDate = $null
+            if ($dueTxt) {
+                try {
+                    $dueDate = & $parseDueDate $dueTxt
+                }
+                catch {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "期限の形式が不正です:`n$($_.Exception.Message)`n例: 2025/1/5, 1/5, 5",
+                        "ToDo",
+                        [System.Windows.Forms.MessageBoxButtons]::OK,
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    ) | Out-Null
+                    return
+                }
+            }
+
+            $task = [PSCustomObject]@{
+                Id          = [guid]::NewGuid().ToString()
+                Title       = $title
+                Description = $desc
+                IsCompleted = $false
+                CreatedAt   = Get-Date
+                CompletedAt = $null
+                DueDate     = $dueDate
+            }
+
+            $script:ToDoTasks += $task
+            & $saveTasks
+            & $clearInputs
+            & $refreshList
+        }
+
+        $btnAdd.Add_Click({ & $addTask })
+
+        $txtTitle.Add_KeyDown({
+            if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+                $_.SuppressKeyPress = $true
+                & $addTask
+            }
+        })
+
+        $updateTask = {
+            if ($lv.SelectedItems.Count -eq 0) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "更新するタスクをリストから選択してください。",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $id = $lv.SelectedItems[0].Tag
+            $task = $script:ToDoTasks | Where-Object { $_.Id -eq $id }
+            if (-not $task) { return }
+
+            $title  = $txtTitle.Text.Trim()
+            $desc   = $txtDesc.Text.Trim()
+            $dueTxt = $txtDue.Text.Trim()
+
+            if ([string]::IsNullOrWhiteSpace($title)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "タイトルを入力してください。",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $dueDate = $null
+            if ($dueTxt) {
+                try {
+                    $dueDate = & $parseDueDate $dueTxt
+                }
+                catch {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "期限の形式が不正です:`n$($_.Exception.Message)`n例: 2025/1/5, 1/5, 5",
+                        "ToDo",
+                        [System.Windows.Forms.MessageBoxButtons]::OK,
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    ) | Out-Null
+                    return
+                }
+            }
+
+            $task | Add-Member -NotePropertyName Title       -NotePropertyValue $title   -Force
+            $task | Add-Member -NotePropertyName Description -NotePropertyValue $desc    -Force
+            $task | Add-Member -NotePropertyName DueDate     -NotePropertyValue $dueDate -Force
+
+            & $saveTasks
+            & $refreshList
+            & $clearInputs
+        }
+
+        $btnUpdate.Add_Click({ & $updateTask })
+
+        $btnToggleCompleted.Add_CheckedChanged({
+            if ($btnToggleCompleted.Checked) {
+                $btnToggleCompleted.Text    = "完了タスクも表示：ON"
+                $btnDeleteCompleted.Enabled = $true
+            }
+            else {
+                $btnToggleCompleted.Text    = "完了タスクも表示：OFF"
+                $btnDeleteCompleted.Enabled = $false
+            }
+
+            & $refreshList
+        })
+
+        $lv.Add_ItemCheck({
+            param($sender, $e)
+
+            $isCompletedNew = ($e.NewValue -eq [System.Windows.Forms.CheckState]::Checked)
+            $item = $lv.Items[$e.Index]
+            $id   = $item.Tag
+
+            $task = $script:ToDoTasks | Where-Object { $_.Id -eq $id }
+            if ($task) {
+                $task.IsCompleted = $isCompletedNew
+                $task.CompletedAt = if ($isCompletedNew) { Get-Date } else { $null }
+
+                & $saveTasks
+
+                $item.SubItems[3].Text = if ($task.IsCompleted) { "完了" } else { "未完了" }
+                $item.ForeColor = if ($task.IsCompleted) {
+                    [System.Drawing.Color]::Gray
+                }
+                else {
+                    [System.Drawing.Color]::Black
+                }
+            }
+        })
+
+        $btnDeleteCompleted.Add_Click({
+            if (-not $btnToggleCompleted.Checked) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "完了タスクを削除するには「完了タスクも表示：ON」にしてください。",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $completed = $script:ToDoTasks | Where-Object { $_.IsCompleted }
+            if (-not $completed -or $completed.Count -eq 0) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "削除対象となる完了タスクはありません。",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $count = $completed.Count
+            $msg = "完了タスクをすべて削除します。（${count} 件）`nよろしいですか？"
+            $result = [System.Windows.Forms.MessageBox]::Show(
+                $msg,
+                "完了タスク削除の確認",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+
+            if ($result -ne [System.Windows.Forms.DialogResult]::Yes) {
+                return
+            }
+
+            $script:ToDoTasks = $script:ToDoTasks | Where-Object { -not $_.IsCompleted }
+
+            & $saveTasks
+            & $refreshList
+            $rtbFull.Clear()
+            $btnUpdate.Enabled = $false
+        })
+
+        $lv.Add_SelectedIndexChanged({
+            if ($lv.SelectedItems.Count -eq 0) {
+                $rtbFull.Clear()
+                $btnUpdate.Enabled = $false
+                return
+            }
+
+            $id   = $lv.SelectedItems[0].Tag
+            $task = $script:ToDoTasks | Where-Object { $_.Id -eq $id }
+            if ($task) {
+                $rtbFull.Clear()
+                $rtbFull.Text = $task.Description
+
+                $txtTitle.Text = $task.Title
+                $txtDesc.Text  = $task.Description
+
+                if ($task.DueDate) {
+                    $txtDue.Text = ([datetime]$task.DueDate).ToString("yyyy/MM/dd")
+                }
+                else {
+                    $txtDue.Clear()
+                }
+
+                $btnUpdate.Enabled = $true
+            }
+            else {
+                $rtbFull.Clear()
+                $btnUpdate.Enabled = $false
+            }
+        })
+
+        $form.Add_FormClosing({
+            & $saveTasks
+            & $saveSettings $splitMain.SplitterDistance
+        })
+
+        & $refreshList
+        $txtTitle.Focus()
+
+        [void]$form.ShowDialog()
+
+    } | Out-Null
+}
+
+# 依頼
+これをベースに、今後の改善・機能追加・バグ修正を行ってください。
+
+------------------------
+
+Window のサイズも終了時に保存して、次回起動時に復元するようにしてください
+
+タイトルや内容など全てのパーツが適度な余白を残して Window 幅いっぱいまで広がるようにしてください
+
+「追加」等のボタンと、リストエリアの隙間が大きすぎるので調整してください
+
+
+------------------
+
+あなたは PowerShell に精通したエンジニアです。
+以下の仕様の ToDo GUI ツールを改善・保守してください。
+
+# 前提（重要）
+・既存データとの互換性を絶対に壊さないこと
+・保存形式は JSON（ConvertTo-Json / ConvertFrom-Json）
+・既存プロパティは変更・削除しない（追加はOK）
+・PowerShell 5.1 / PowerShell 7 両対応
+
+# 現在のデータ構造
+各タスクは PSCustomObject で以下のプロパティを持つ
+
+- Id (string GUID)
+- Title (string)
+- Description (string)
+- IsCompleted (bool)
+- CreatedAt (datetime)
+- CompletedAt (datetime or null)
+- DueDate (datetime or null)
+
+※ CreatedAt / DueDate は string や PSCustomObject になるケースがあるため吸収すること
+
+# 保存場所
+$env:LOCALAPPDATA\InterruptToDo\
+
+- ToDoTasks.json（タスク本体）
+- ToDoSettings.json（UI設定）
+
+# 設定ファイル仕様
+ToDoSettings.json:
+{
+  "SplitterDistance": number
+}
+
+# 現在の機能
+・関数名: ToDo（グローバル関数1つ）
+・GUI（Windows Forms）
+・タスク追加 / 更新
+・完了チェック（チェックボックス）
+・完了→未完了戻し
+・完了タスク非表示（トグルボタン）
+・完了タスク物理削除
+・URLクリックでブラウザ起動
+・期限入力（YYYY/M/D, M/D, D 対応）
+・期限ありタスク優先表示
+・入力クリアボタン
+・更新ボタンは編集中のみ有効
+・ウィンドウ最前面
+・終了時自動保存
+・Splitter位置保存＆復元
+
+# UI仕様
+・上: タスクリスト（固定高さ）
+・下: 内容（可変・スクロールあり）
+・ウィンドウ拡大時は「内容エリアのみ拡大」
+・SplitContainer.FixedPanel = Panel1
+
+# ソート仕様（重要）
+1. 期限ありを上
+2. DueDate 昇順（近い順）
+3. CreatedAt 昇順
+
+# 既知の考慮点
+・PS5.1 では DateTime が PSCustomObject になる問題あり
+・Add-Member -Force を使用すること
+・Test-Path に null を渡さないこと
+・Out-Null で False 出力を防ぐこと
+
+# 今後の方針
+・既存仕様を壊さず改善
+・後方互換を必ず維持
+・動作確認済みの完全コードで回答
+
+# 現在のコード
+#requires -Version 5.1
+
+function ToDo {
+
+    & {
+        if ([string]::IsNullOrWhiteSpace($script:ToDoDataDir)) {
+            $script:ToDoDataDir = Join-Path $env:LOCALAPPDATA 'InterruptToDo'
+        }
+        if ([string]::IsNullOrWhiteSpace($script:ToDoDataPath)) {
+            $script:ToDoDataPath = Join-Path $script:ToDoDataDir 'ToDoTasks.json'
+        }
+        if ([string]::IsNullOrWhiteSpace($script:ToDoSettingsPath)) {
+            $script:ToDoSettingsPath = Join-Path $script:ToDoDataDir 'ToDoSettings.json'
+        }
+        if ($null -eq $script:ToDoTasks) {
+            $script:ToDoTasks = @()
+        }
+        if ($null -eq $script:ToDoInternalState) {
+            $script:ToDoInternalState = [PSCustomObject]@{
+                RefreshingList    = $false
+                SuppressItemCheck = $false
+            }
+        }
+
+        Add-Type -AssemblyName System.Windows.Forms | Out-Null
+        Add-Type -AssemblyName System.Drawing | Out-Null
+        [void][System.Windows.Forms.Application]::EnableVisualStyles()
+
+        $ensureDirectory = {
+            if ([string]::IsNullOrWhiteSpace($script:ToDoDataDir)) { return }
+            if (-not (Test-Path -LiteralPath $script:ToDoDataDir)) {
+                [void](New-Item -ItemType Directory -Path $script:ToDoDataDir -Force)
+            }
+        }
+
+        $normalizeDateValue = {
+            param(
+                [object]$Value,
+                [object]$Fallback
+            )
+
+            if ($null -eq $Value) { return $Fallback }
+            if ($Value -is [datetime]) { return $Value }
+
+            if ($Value -is [string]) {
+                $parsed = [datetime]::MinValue
+                if ([datetime]::TryParse($Value, [ref]$parsed)) {
+                    return $parsed
+                }
+                return $Fallback
+            }
+
+            if ($Value -is [psobject]) {
+                $props = $Value.PSObject.Properties
+
+                foreach ($name in @('DateTime', 'dateTime', 'Value', 'value')) {
+                    if ($props[$name]) {
+                        return & $normalizeDateValue $props[$name].Value $Fallback
+                    }
+                }
+
+                $allDateParts = $true
+                foreach ($name in @('Year', 'Month', 'Day')) {
+                    if (-not $props[$name]) {
+                        $allDateParts = $false
+                        break
+                    }
+                }
+
+                if ($allDateParts) {
+                    try {
+                        return [datetime]::new(
+                            [int]$props['Year'].Value,
+                            [int]$props['Month'].Value,
+                            [int]$props['Day'].Value,
+                            $(if ($props['Hour']) { [int]$props['Hour'].Value } else { 0 }),
+                            $(if ($props['Minute']) { [int]$props['Minute'].Value } else { 0 }),
+                            $(if ($props['Second']) { [int]$props['Second'].Value } else { 0 })
+                        )
+                    }
+                    catch {
+                    }
+                }
+            }
+
+            return $Fallback
+        }
+
+        $loadTasks = {
+            if ([string]::IsNullOrWhiteSpace($script:ToDoDataPath)) {
+                $script:ToDoTasks = @()
+                return
+            }
+
+            if (-not (Test-Path -LiteralPath $script:ToDoDataPath)) {
+                $script:ToDoTasks = @()
+                return
+            }
+
+            try {
+                $json = Get-Content -LiteralPath $script:ToDoDataPath -Raw -ErrorAction Stop
+                if ([string]::IsNullOrWhiteSpace($json)) {
+                    $script:ToDoTasks = @()
+                    return
+                }
+
+                $loaded = $json | ConvertFrom-Json -ErrorAction Stop
+
+                if ($null -eq $loaded) {
+                    $script:ToDoTasks = @()
+                }
+                elseif ($loaded -is [System.Collections.IEnumerable] -and -not ($loaded -is [string])) {
+                    $script:ToDoTasks = @($loaded)
+                }
+                else {
+                    $script:ToDoTasks = @($loaded)
+                }
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "タスク読み込みエラー:`n$($_.Exception.Message)",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                ) | Out-Null
+                $script:ToDoTasks = @()
+            }
+        }
+
+        $ensureTaskSchema = {
+            foreach ($t in @($script:ToDoTasks)) {
+                if ($null -eq $t) { continue }
+
+                $props = $t.PSObject.Properties
+
+                if (-not $props['Id'])          { $t | Add-Member -NotePropertyName Id          -NotePropertyValue ([guid]::NewGuid().ToString()) -Force }
+                if (-not $props['Title'])       { $t | Add-Member -NotePropertyName Title       -NotePropertyValue '' -Force }
+                if (-not $props['Description']) { $t | Add-Member -NotePropertyName Description -NotePropertyValue '' -Force }
+                if (-not $props['IsCompleted']) { $t | Add-Member -NotePropertyName IsCompleted -NotePropertyValue $false -Force }
+                if (-not $props['CreatedAt'])   { $t | Add-Member -NotePropertyName CreatedAt   -NotePropertyValue (Get-Date) -Force }
+                if (-not $props['CompletedAt']) { $t | Add-Member -NotePropertyName CompletedAt -NotePropertyValue $null -Force }
+                if (-not $props['DueDate'])     { $t | Add-Member -NotePropertyName DueDate     -NotePropertyValue $null -Force }
+            }
+        }
+
+        $normalizeTaskDates = {
+            foreach ($t in @($script:ToDoTasks)) {
+                if ($null -eq $t) { continue }
+
+                $t | Add-Member -NotePropertyName CreatedAt   -NotePropertyValue (& $normalizeDateValue $t.CreatedAt   (Get-Date)) -Force
+                $t | Add-Member -NotePropertyName CompletedAt -NotePropertyValue (& $normalizeDateValue $t.CompletedAt $null) -Force
+                $t | Add-Member -NotePropertyName DueDate     -NotePropertyValue (& $normalizeDateValue $t.DueDate     $null) -Force
+
+                try {
+                    $t.IsCompleted = [bool]$t.IsCompleted
+                }
+                catch {
+                    $t | Add-Member -NotePropertyName IsCompleted -NotePropertyValue $false -Force
+                }
+
+                if ([string]::IsNullOrWhiteSpace([string]$t.Id)) {
+                    $t | Add-Member -NotePropertyName Id -NotePropertyValue ([guid]::NewGuid().ToString()) -Force
+                }
+                if ($null -eq $t.Title) {
+                    $t | Add-Member -NotePropertyName Title -NotePropertyValue '' -Force
+                }
+                if ($null -eq $t.Description) {
+                    $t | Add-Member -NotePropertyName Description -NotePropertyValue '' -Force
+                }
+            }
+        }
+
+        $saveTasks = {
+            try {
+                & $ensureDirectory
+                if ([string]::IsNullOrWhiteSpace($script:ToDoDataPath)) { return }
+
+                $script:ToDoTasks |
+                    ConvertTo-Json -Depth 8 |
+                    Out-File -FilePath $script:ToDoDataPath -Encoding UTF8 -Force
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "タスク保存エラー:`n$($_.Exception.Message)",
+                    "ToDo",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                ) | Out-Null
+            }
+        }
+
+        $loadSettings = {
+            $settings = [PSCustomObject]@{
+                SplitterDistance = 270
+                WindowWidth      = 900
+                WindowHeight     = 680
+            }
+
+            if ([string]::IsNullOrWhiteSpace($script:ToDoSettingsPath)) { return $settings }
+            if (-not (Test-Path -LiteralPath $script:ToDoSettingsPath)) { return $settings }
+
+            try {
+                $json = Get-Content -LiteralPath $script:ToDoSettingsPath -Raw -ErrorAction Stop
+                if ([string]::IsNullOrWhiteSpace($json)) { return $settings }
+
+                $loaded = $json | ConvertFrom-Json -ErrorAction Stop
+                if ($null -ne $loaded) {
+                    if ($loaded.PSObject.Properties['SplitterDistance'] -and $loaded.SplitterDistance -as [int]) {
+                        $settings.SplitterDistance = [int]$loaded.SplitterDistance
+                    }
+                    if ($loaded.PSObject.Properties['WindowWidth'] -and $loaded.WindowWidth -as [int]) {
+                        $settings.WindowWidth = [int]$loaded.WindowWidth
+                    }
+                    if ($loaded.PSObject.Properties['WindowHeight'] -and $loaded.WindowHeight -as [int]) {
+                        $settings.WindowHeight = [int]$loaded.WindowHeight
+                    }
+                }
+
+                return $settings
+            }
+            catch {
+                return $settings
+            }
+        }
+
+        $saveSettings = {
+            param(
+                [int]$SplitterDistance,
+                [int]$WindowWidth,
+                [int]$WindowHeight
+            )
+
+            try {
+                & $ensureDirectory
+                if ([string]::IsNullOrWhiteSpace($script:ToDoSettingsPath)) { return }
+
+                $settings = [PSCustomObject]@{
+                    SplitterDistance = $SplitterDistance
+                    WindowWidth      = $WindowWidth
+                    WindowHeight     = $WindowHeight
+                }
+
+                $settings |
+                    ConvertTo-Json -Depth 3 |
+                    Out-File -FilePath $script:ToDoSettingsPath -Encoding UTF8 -Force
+            }
+            catch {
+            }
+        }
+
+        $parseDueDate = {
+            param([string]$Text)
+
+            $Text = $Text.Trim()
+            if (-not $Text) { return $null }
+
+            $matches = [System.Text.RegularExpressions.Regex]::Matches($Text, '\d+')
+            $nums = @()
+
+            foreach ($m in $matches) {
+                try {
+                    $nums += [int]$m.Value
+                }
+                catch {
+                    throw "期限の数字部分を解釈できませんでした。"
+                }
+            }
+
+            if ($nums.Count -eq 0) {
+                throw "期限に数字が含まれていません。"
+            }
+
+            $today = (Get-Date).Date
+
+            switch ($nums.Count) {
+                1 {
+                    $day = $nums[0]
+                    if ($day -lt 1 -or $day -gt 31) {
+                        throw "期限の『日』は 1～31 で指定してください。"
+                    }
+
+                    $year  = $today.Year
+                    $month = $today.Month
+
+                    for ($i = 0; $i -lt 24; $i++) {
+                        $daysInMonth = [datetime]::DaysInMonth($year, $month)
+                        if ($day -le $daysInMonth) {
+                            $candidate = [datetime]::new($year, $month, $day)
+                            if ($candidate -ge $today) {
+                                return $candidate.Date
+                            }
+                        }
+
+                        $month++
+                        if ($month -gt 12) {
+                            $month = 1
+                            $year++
+                        }
+                    }
+
+                    throw "期限の日付を将来日に解釈できませんでした。"
+                }
+
+                2 {
+                    $month = $nums[0]
+                    $day   = $nums[1]
+
+                    if ($month -lt 1 -or $month -gt 12) {
+                        throw "期限の『月』は 1～12 で指定してください。"
+                    }
+                    if ($day -lt 1 -or $day -gt 31) {
+                        throw "期限の『日』は 1～31 で指定してください。"
+                    }
+
+                    $year = $today.Year
+                    if ($day -gt [datetime]::DaysInMonth($year, $month)) {
+                        throw "指定された月 $month に日 $day は存在しません。"
+                    }
+
+                    $candidate = [datetime]::new($year, $month, $day)
+                    if ($candidate -lt $today) {
+                        $year++
+                        if ($day -gt [datetime]::DaysInMonth($year, $month)) {
+                            throw "指定された月日を将来日に解釈できません。"
+                        }
+                        $candidate = [datetime]::new($year, $month, $day)
+                    }
+
+                    return $candidate.Date
+                }
+
+                3 {
+                    $year  = $nums[0]
+                    $month = $nums[1]
+                    $day   = $nums[2]
+
+                    try {
+                        return ([datetime]::new($year, $month, $day)).Date
+                    }
+                    catch {
+                        throw "期限の年月日が不正です（年/月/日 で指定してください）。"
+                    }
+                }
+
+                default {
+                    throw "期限の形式が不正です（指定できるのは 日 / 月日 / 年月日 です）。"
+                }
+            }
+        }
+
+        $getTaskById = {
+            param([string]$Id)
+
+            if ([string]::IsNullOrWhiteSpace($Id)) { return $null }
+
+            foreach ($task in @($script:ToDoTasks)) {
+                if ($null -ne $task -and [string]$task.Id -eq $Id) {
+                    return $task
+                }
+            }
+
+            return $null
+        }
+
+        $getSortedTasks = {
+            $script:ToDoTasks | Sort-Object `
+                @{ Expression = { if ($_.DueDate) { 0 } else { 1 } }; Ascending = $true }, `
+                @{ Expression = { if ($_.DueDate) { [datetime]$_.DueDate } else { [datetime]::MaxValue } }; Ascending = $true }, `
+                @{ Expression = { if ($_.CreatedAt) { [datetime]$_.CreatedAt } else { [datetime]::MaxValue } }; Ascending = $true }
+        }
+
+        & $loadTasks
+        & $ensureTaskSchema
+        & $normalizeTaskDates
+        $settings = & $loadSettings
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = '割り込み ToDo'
+        $form.Size = New-Object System.Drawing.Size($settings.WindowWidth, $settings.WindowHeight)
+        $form.StartPosition = 'CenterScreen'
+        $form.TopMost = $true
+        $form.MinimumSize = New-Object System.Drawing.Size(760, 520)
+
+        # 全体レイアウト
+        $rootPanel = New-Object System.Windows.Forms.TableLayoutPanel
+        $rootPanel.Dock = 'Fill'
+        $rootPanel.Padding = New-Object System.Windows.Forms.Padding(10)
+        $rootPanel.ColumnCount = 1
+        $rootPanel.RowCount = 2
+        $rootPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+        $rootPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+        $rootPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+        $form.Controls.Add($rootPanel)
+
+        # 上部入力エリア
+        $inputTable = New-Object System.Windows.Forms.TableLayoutPanel
+        $inputTable.Dock = 'Top'
+        $inputTable.AutoSize = $true
+        $inputTable.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+        $inputTable.ColumnCount = 2
+        $inputTable.RowCount = 4
+        $inputTable.Margin = New-Object System.Windows.Forms.Padding(0,0,0,2)
+        $inputTable.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 80)))
+        $inputTable.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+
+        $inputTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+        $inputTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+        $inputTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+        $inputTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+        $rootPanel.Controls.Add($inputTable, 0, 0)
+
+        $lblTitle = New-Object System.Windows.Forms.Label
+        $lblTitle.Text = 'タイトル:'
+        $lblTitle.AutoSize = $true
+        $lblTitle.Anchor = 'Left'
+        $lblTitle.Margin = New-Object System.Windows.Forms.Padding(0,6,8,6)
+        $inputTable.Controls.Add($lblTitle, 0, 0)
+
+        $txtTitle = New-Object System.Windows.Forms.TextBox
+        $txtTitle.Dock = 'Fill'
+        $txtTitle.Margin = New-Object System.Windows.Forms.Padding(0,3,0,3)
+        $inputTable.Controls.Add($txtTitle, 1, 0)
+
+        $lblDesc = New-Object System.Windows.Forms.Label
+        $lblDesc.Text = '内容:'
+        $lblDesc.AutoSize = $true
+        $lblDesc.Anchor = 'Left,Top'
+        $lblDesc.Margin = New-Object System.Windows.Forms.Padding(0,6,8,6)
+        $inputTable.Controls.Add($lblDesc, 0, 1)
+
+        $txtDesc = New-Object System.Windows.Forms.TextBox
+        $txtDesc.Multiline = $true
+        $txtDesc.ScrollBars = 'Vertical'
+        $txtDesc.Dock = 'Fill'
+        $txtDesc.Height = 80
+        $txtDesc.Margin = New-Object System.Windows.Forms.Padding(0,3,0,2)
+        $inputTable.Controls.Add($txtDesc, 1, 1)
+
+        $lblDue = New-Object System.Windows.Forms.Label
+        $lblDue.Text = '期限(任意):'
+        $lblDue.AutoSize = $true
+        $lblDue.Anchor = 'Left'
+        $lblDue.Margin = New-Object System.Windows.Forms.Padding(0,6,8,6)
+        $inputTable.Controls.Add($lblDue, 0, 2)
+
+        $duePanel = New-Object System.Windows.Forms.FlowLayoutPanel
+        $duePanel.AutoSize = $true
+        $duePanel.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+        $duePanel.WrapContents = $false
+        $duePanel.FlowDirection = 'LeftToRight'
+        $duePanel.Anchor = 'Left'
+        $duePanel.Margin = New-Object System.Windows.Forms.Padding(0,0,0,1)
+        $inputTable.Controls.Add($duePanel, 1, 2)
+
+        $txtDue = New-Object System.Windows.Forms.TextBox
+        $txtDue.Width = 120
+        $txtDue.Margin = New-Object System.Windows.Forms.Padding(0,3,8,3)
+        $duePanel.Controls.Add($txtDue)
+
+        $btnTodayDue = New-Object System.Windows.Forms.Button
+        $btnTodayDue.Text = '今日'
+        $btnTodayDue.AutoSize = $true
+        $btnTodayDue.Margin = New-Object System.Windows.Forms.Padding(0,1,8,1)
+        $duePanel.Controls.Add($btnTodayDue)
+
+        $buttonPanel = New-Object System.Windows.Forms.FlowLayoutPanel
+        $buttonPanel.AutoSize = $true
+        $buttonPanel.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+        $buttonPanel.WrapContents = $true
+        $buttonPanel.FlowDirection = 'LeftToRight'
+        $buttonPanel.Anchor = 'Left'
+        $buttonPanel.Margin = New-Object System.Windows.Forms.Padding(0,2,0,0)
+        $inputTable.Controls.Add($buttonPanel, 1, 3)
+
+        $spacerLabel = New-Object System.Windows.Forms.Label
+        $spacerLabel.Text = ''
+        $spacerLabel.AutoSize = $true
+        $inputTable.Controls.Add($spacerLabel, 0, 3)
+
+        $btnAdd = New-Object System.Windows.Forms.Button
+        $btnAdd.Text = '追加'
+        $btnAdd.AutoSize = $true
+        $btnAdd.Margin = New-Object System.Windows.Forms.Padding(0,0,8,0)
+        $buttonPanel.Controls.Add($btnAdd)
+
+        $btnUpdate = New-Object System.Windows.Forms.Button
+        $btnUpdate.Text = '更新'
+        $btnUpdate.AutoSize = $true
+        $btnUpdate.Enabled = $false
+        $btnUpdate.Margin = New-Object System.Windows.Forms.Padding(0,0,8,0)
+        $buttonPanel.Controls.Add($btnUpdate)
+
+        $btnClear = New-Object System.Windows.Forms.Button
+        $btnClear.Text = '入力クリア'
+        $btnClear.AutoSize = $true
+        $btnClear.Margin = New-Object System.Windows.Forms.Padding(0,0,8,0)
+        $buttonPanel.Controls.Add($btnClear)
+
+        $btnToggleCompleted = New-Object System.Windows.Forms.CheckBox
+        $btnToggleCompleted.Appearance = 'Button'
+        $btnToggleCompleted.Text = '完了タスクも表示：OFF'
+        $btnToggleCompleted.TextAlign = 'MiddleCenter'
+        $btnToggleCompleted.AutoSize = $true
+        $btnToggleCompleted.Checked = $false
+        $btnToggleCompleted.Margin = New-Object System.Windows.Forms.Padding(0,0,8,0)
+        $buttonPanel.Controls.Add($btnToggleCompleted)
+
+        $btnDeleteCompleted = New-Object System.Windows.Forms.Button
+        $btnDeleteCompleted.Text = '完了タスク削除'
+        $btnDeleteCompleted.AutoSize = $true
+        $btnDeleteCompleted.Enabled = $false
+        $btnDeleteCompleted.Margin = New-Object System.Windows.Forms.Padding(0,0,8,0)
+        $buttonPanel.Controls.Add($btnDeleteCompleted)
+
+        # 下部
+        $splitMain = New-Object System.Windows.Forms.SplitContainer
+        $splitMain.Dock = 'Fill'
+        $splitMain.Margin = New-Object System.Windows.Forms.Padding(0,0,0,0)
+        $splitMain.Orientation = [System.Windows.Forms.Orientation]::Horizontal
+        $splitMain.SplitterWidth = 6
+        $splitMain.FixedPanel = [System.Windows.Forms.FixedPanel]::Panel1
+        $splitMain.IsSplitterFixed = $false
+        $splitMain.Panel1MinSize = 150
+        $splitMain.Panel2MinSize = 80
+        $rootPanel.Controls.Add($splitMain, 0, 1)
+
+        $lv = New-Object System.Windows.Forms.ListView
+        $lv.Dock = 'Fill'
+        $lv.View = 'Details'
+        $lv.FullRowSelect = $true
+        $lv.GridLines = $true
+        $lv.CheckBoxes = $true
+        $lv.HideSelection = $false
+        $lv.MultiSelect = $false
+
+        [void]$lv.Columns.Add('タイトル',300)
+        [void]$lv.Columns.Add('期限',110)
+        [void]$lv.Columns.Add('作成日時',150)
+        [void]$lv.Columns.Add('状態',80)
+        [void]$lv.Columns.Add('内容',200)
+
+        $splitMain.Panel1.Controls.Add($lv)
+
+        $panelBottom = New-Object System.Windows.Forms.Panel
+        $panelBottom.Dock = 'Fill'
+        $splitMain.Panel2.Controls.Add($panelBottom)
+
+        $lblFull = New-Object System.Windows.Forms.Label
+        $lblFull.Text = '内容（全文・URLクリック可）:'
+        $lblFull.Dock = 'Top'
+        $lblFull.Height = 20
+        $lblFull.Margin = New-Object System.Windows.Forms.Padding(0,0,0,4)
+        $panelBottom.Controls.Add($lblFull)
+
+        $rtbFull = New-Object System.Windows.Forms.RichTextBox
+        $rtbFull.Dock = 'Fill'
+        $rtbFull.Multiline = $true
+        $rtbFull.ScrollBars = 'Vertical'
+        $rtbFull.WordWrap = $true
+        $rtbFull.ReadOnly = $true
+        $rtbFull.DetectUrls = $true
+        $panelBottom.Controls.Add($rtbFull)
+
+        $clearInputs = {
+            $txtTitle.Clear()
+            $txtDesc.Clear()
+            $txtDue.Clear()
+            $rtbFull.Clear()
+
+            foreach ($sel in @($lv.SelectedItems)) {
+                $sel.Selected = $false
+            }
+
+            $btnUpdate.Enabled = $false
+            $txtTitle.Focus()
+        }
+
+        $showTaskInEditor = {
+            param([object]$Task)
+
+            if ($null -eq $Task) {
+                $rtbFull.Clear()
+                $btnUpdate.Enabled = $false
+                return
+            }
+
+            $rtbFull.Clear()
+            $rtbFull.Text = [string]$Task.Description
+            $txtTitle.Text = [string]$Task.Title
+            $txtDesc.Text  = [string]$Task.Description
+
+            if ($Task.DueDate) {
+                $txtDue.Text = ([datetime]$Task.DueDate).ToString('yyyy/MM/dd')
+            }
+            else {
+                $txtDue.Clear()
+            }
+
+            $btnUpdate.Enabled = $true
+        }
+
+        $refreshList = {
+            param(
+                [string]$SelectId = $null
+            )
+
+            if ($script:ToDoInternalState.RefreshingList) { return }
+
+            $script:ToDoInternalState.RefreshingList = $true
+            $script:ToDoInternalState.SuppressItemCheck = $true
+
+            try {
+                $lv.BeginUpdate()
+                $lv.Items.Clear()
+
+                $showCompleted = $btnToggleCompleted.Checked
+                $tasks = & $getSortedTasks
+                $selectedItem = $null
+
+                foreach ($t in @($tasks)) {
+                    if (-not $showCompleted -and $t.IsCompleted) { continue }
+
+                    $item = New-Object System.Windows.Forms.ListViewItem([string]$t.Title)
+                    $item.Tag = [string]$t.Id
+                    $item.Checked = [bool]$t.IsCompleted
+
+                    $dueText = ''
+                    if ($t.DueDate) {
+                        $dueText = ([datetime]$t.DueDate).ToString('yyyy/MM/dd')
+                    }
+                    [void]$item.SubItems.Add($dueText)
+
+                    $createdText = ''
+                    if ($t.CreatedAt) {
+                        $createdText = ([datetime]$t.CreatedAt).ToString('yyyy/MM/dd HH:mm')
+                    }
+                    [void]$item.SubItems.Add($createdText)
+
+                    $status = if ($t.IsCompleted) { '完了' } else { '未完了' }
+                    [void]$item.SubItems.Add($status)
+
+                    $descShort = [string]$t.Description
+                    if ($descShort.Length -gt 30) {
+                        $descShort = $descShort.Substring(0, 30) + '...'
+                    }
+                    [void]$item.SubItems.Add($descShort)
+
+                    if ($t.IsCompleted) {
+                        $item.ForeColor = [System.Drawing.Color]::Gray
+                    }
+
+                    [void]$lv.Items.Add($item)
+
+                    if (-not [string]::IsNullOrWhiteSpace($SelectId) -and [string]$t.Id -eq $SelectId) {
+                        $selectedItem = $item
+                    }
+                }
+
+                if ($selectedItem) {
+                    $selectedItem.Selected = $true
+                    $selectedItem.Focused = $true
+                    $selectedItem.EnsureVisible()
+                }
+
+                $btnDeleteCompleted.Enabled = $btnToggleCompleted.Checked
+            }
+            finally {
+                $lv.EndUpdate()
+                $script:ToDoInternalState.SuppressItemCheck = $false
+                $script:ToDoInternalState.RefreshingList = $false
+            }
+        }
+
+        $addTask = {
+            $title  = $txtTitle.Text.Trim()
+            $desc   = $txtDesc.Text.Trim()
+            $dueTxt = $txtDue.Text.Trim()
+
+            if ([string]::IsNullOrWhiteSpace($title)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'タイトルを入力してください。',
+                    'ToDo',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $dueDate = $null
+            if ($dueTxt) {
+                try {
+                    $dueDate = & $parseDueDate $dueTxt
+                }
+                catch {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "期限の形式が不正です:`n$($_.Exception.Message)`n例: 2025/1/5, 1/5, 5",
+                        'ToDo',
+                        [System.Windows.Forms.MessageBoxButtons]::OK,
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    ) | Out-Null
+                    return
+                }
+            }
+
+            $task = [PSCustomObject]@{
+                Id          = [guid]::NewGuid().ToString()
+                Title       = $title
+                Description = $desc
+                IsCompleted = $false
+                CreatedAt   = Get-Date
+                CompletedAt = $null
+                DueDate     = $dueDate
+            }
+
+            $script:ToDoTasks += $task
+            & $saveTasks
+            & $clearInputs
+            & $refreshList $task.Id
+        }
+
+        $updateTask = {
+            if ($lv.SelectedItems.Count -eq 0) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    '更新するタスクをリストから選択してください。',
+                    'ToDo',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $id = [string]$lv.SelectedItems[0].Tag
+            $task = & $getTaskById $id
+            if ($null -eq $task) { return }
+
+            $title  = $txtTitle.Text.Trim()
+            $desc   = $txtDesc.Text.Trim()
+            $dueTxt = $txtDue.Text.Trim()
+
+            if ([string]::IsNullOrWhiteSpace($title)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'タイトルを入力してください。',
+                    'ToDo',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $dueDate = $null
+            if ($dueTxt) {
+                try {
+                    $dueDate = & $parseDueDate $dueTxt
+                }
+                catch {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "期限の形式が不正です:`n$($_.Exception.Message)`n例: 2025/1/5, 1/5, 5",
+                        'ToDo',
+                        [System.Windows.Forms.MessageBoxButtons]::OK,
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    ) | Out-Null
+                    return
+                }
+            }
+
+            $task | Add-Member -NotePropertyName Title       -NotePropertyValue $title   -Force
+            $task | Add-Member -NotePropertyName Description -NotePropertyValue $desc    -Force
+            $task | Add-Member -NotePropertyName DueDate     -NotePropertyValue $dueDate -Force
+
+            & $saveTasks
+            & $refreshList $task.Id
+            & $clearInputs
+        }
+
+        $form.Add_Shown({
+            try {
+                $maxSplitter = $splitMain.Height - $splitMain.Panel2MinSize - $splitMain.SplitterWidth
+                $minSplitter = $splitMain.Panel1MinSize
+                $saved = [int]$settings.SplitterDistance
+
+                if ($saved -lt $minSplitter) { $saved = $minSplitter }
+                if ($saved -gt $maxSplitter) { $saved = $maxSplitter }
+
+                $splitMain.SplitterDistance = $saved
+            }
+            catch {
+            }
+        })
+
+        $btnTodayDue.Add_Click({
+            $txtDue.Text = (Get-Date).ToString('yyyy/MM/dd')
+        })
+
+        $btnClear.Add_Click({
+            & $clearInputs
+        })
+
+        $btnAdd.Add_Click({
+            & $addTask
+        })
+
+        $btnUpdate.Add_Click({
+            & $updateTask
+        })
+
+        $txtTitle.Add_KeyDown({
+            if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+                $_.SuppressKeyPress = $true
+                if ($btnUpdate.Enabled -and $lv.SelectedItems.Count -gt 0) {
+                    & $updateTask
+                }
+                else {
+                    & $addTask
+                }
+            }
+        })
+
+        $rtbFull.Add_LinkClicked({
+            param($sender, $e)
+            try {
+                if (-not [string]::IsNullOrWhiteSpace($e.LinkText)) {
+                    Start-Process $e.LinkText
+                }
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "URL を開けませんでした:`n$($_.Exception.Message)",
+                    'ToDo',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                ) | Out-Null
+            }
+        })
+
+        $btnToggleCompleted.Add_CheckedChanged({
+            if ($btnToggleCompleted.Checked) {
+                $btnToggleCompleted.Text = '完了タスクも表示：ON'
+                $btnDeleteCompleted.Enabled = $true
+            }
+            else {
+                $btnToggleCompleted.Text = '完了タスクも表示：OFF'
+                $btnDeleteCompleted.Enabled = $false
+            }
+
+            $selectedId = $null
+            if ($lv.SelectedItems.Count -gt 0) {
+                $selectedId = [string]$lv.SelectedItems[0].Tag
+            }
+
+            & $refreshList $selectedId
+        })
+
+        $lv.Add_ItemCheck({
+            param($sender, $e)
+
+            if ($script:ToDoInternalState.SuppressItemCheck) { return }
+            if ($e.Index -lt 0 -or $e.Index -ge $lv.Items.Count) { return }
+
+            $item = $lv.Items[$e.Index]
+            if ($null -eq $item) { return }
+
+            $id = [string]$item.Tag
+            $task = & $getTaskById $id
+            if ($null -eq $task) { return }
+
+            $isCompletedNew = ($e.NewValue -eq [System.Windows.Forms.CheckState]::Checked)
+
+            $task | Add-Member -NotePropertyName IsCompleted -NotePropertyValue $isCompletedNew -Force
+            $task | Add-Member -NotePropertyName CompletedAt -NotePropertyValue $(if ($isCompletedNew) { Get-Date } else { $null }) -Force
+
+            & $saveTasks
+
+            if ($btnToggleCompleted.Checked) {
+                $item.SubItems[3].Text = if ($task.IsCompleted) { '完了' } else { '未完了' }
+                $item.ForeColor = if ($task.IsCompleted) { [System.Drawing.Color]::Gray } else { [System.Drawing.Color]::Black }
+
+                if ($lv.SelectedItems.Count -gt 0 -and [string]$lv.SelectedItems[0].Tag -eq $id) {
+                    & $showTaskInEditor $task
+                }
+            }
+            else {
+                & $refreshList
+                if ($task.IsCompleted) {
+                    $rtbFull.Clear()
+                    $btnUpdate.Enabled = $false
+                }
+            }
+        })
+
+        $btnDeleteCompleted.Add_Click({
+            if (-not $btnToggleCompleted.Checked) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    '完了タスクを削除するには「完了タスクも表示：ON」にしてください。',
+                    'ToDo',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $completed = @($script:ToDoTasks | Where-Object { $_.IsCompleted })
+            if ($completed.Count -eq 0) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    '削除対象となる完了タスクはありません。',
+                    'ToDo',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Information
+                ) | Out-Null
+                return
+            }
+
+            $count = $completed.Count
+            $msg = "完了タスクをすべて削除します。（${count} 件）`nよろしいですか？"
+            $result = [System.Windows.Forms.MessageBox]::Show(
+                $msg,
+                '完了タスク削除の確認',
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+
+            if ($result -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+            $script:ToDoTasks = @($script:ToDoTasks | Where-Object { -not $_.IsCompleted })
+
+            & $saveTasks
+            & $refreshList
+            $rtbFull.Clear()
+            $btnUpdate.Enabled = $false
+        })
+
+        $lv.Add_SelectedIndexChanged({
+            if ($script:ToDoInternalState.RefreshingList) { return }
+
+            if ($lv.SelectedItems.Count -eq 0) {
+                $rtbFull.Clear()
+                $btnUpdate.Enabled = $false
+                return
+            }
+
+            $id = [string]$lv.SelectedItems[0].Tag
+            $task = & $getTaskById $id
+            & $showTaskInEditor $task
+        })
+
+        $form.Add_FormClosing({
+            try {
+                & $saveTasks
+
+                if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Normal) {
+                    $widthToSave  = $form.Width
+                    $heightToSave = $form.Height
+                }
+                else {
+                    $widthToSave  = $form.RestoreBounds.Width
+                    $heightToSave = $form.RestoreBounds.Height
+                }
+
+                & $saveSettings `
+                    -SplitterDistance $splitMain.SplitterDistance `
+                    -WindowWidth $widthToSave `
+                    -WindowHeight $heightToSave
+            }
+            catch {
+            }
+        })
+
+        & $refreshList
+        $txtTitle.Focus()
+
+        [void]$form.ShowDialog()
+
+    } | Out-Null
+}
+
+# 依頼事項
+先にアップロードした画像の赤色で囲んだところを詰めてください
