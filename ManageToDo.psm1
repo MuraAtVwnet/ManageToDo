@@ -616,13 +616,6 @@ function ToDo([switch]$VertionCheck) {
         $panelBottom.Dock = 'Fill'
         $splitMain.Panel2.Controls.Add($panelBottom)
 
-        $lblFull = New-Object System.Windows.Forms.Label
-        $lblFull.Text = '内容（全文・URLクリック可）:'
-        $lblFull.Dock = 'Top'
-        $lblFull.Height = 18
-        $lblFull.Margin = New-Object System.Windows.Forms.Padding(0)
-        $panelBottom.Controls.Add($lblFull)
-
         $rtbFull = New-Object System.Windows.Forms.RichTextBox
         $rtbFull.Dock = 'Fill'
         $rtbFull.Multiline = $true
@@ -630,7 +623,15 @@ function ToDo([switch]$VertionCheck) {
         $rtbFull.WordWrap = $true
         $rtbFull.ReadOnly = $true
         $rtbFull.DetectUrls = $true
+        $rtbFull.BorderStyle = 'FixedSingle'
         $panelBottom.Controls.Add($rtbFull)
+
+        $lblFull = New-Object System.Windows.Forms.Label
+        $lblFull.Text = '内容（全文・URLクリック可）:'
+        $lblFull.Dock = 'Top'
+        $lblFull.Height = 18
+        $lblFull.Margin = New-Object System.Windows.Forms.Padding(0)
+        $panelBottom.Controls.Add($lblFull)
 
         $resizeButtonRow = {
             $x = 0
